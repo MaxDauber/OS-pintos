@@ -1,0 +1,282 @@
+       	+---------------------------+
+		    |	      	EE 461S		        |
+		    | PROJECT 3: VIRTUAL MEMORY	|
+		    |	     DESIGN DOCUMENT	    |
+		    +---------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Edie Zhou edie.zhou@utexas.edu
+Meyer Dauber max.dauber@utexas.edu
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+			PAGE TABLE MANAGEMENT
+			=====================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+struct spt_entry{
+
+  //hash element
+  struct list_elem elem;
+
+  // key
+  void * v_addr;
+
+  // physical frame address
+  void * p_addr;
+
+  // File pointer
+  struct file *file_pt;
+
+  // File offset
+  off_t ofs;
+
+  // Number of bytes read starting at offset ofs
+  uint32_t read_bytes;
+
+  // Number of bytes to be zeroes
+  uint32_t zero_bytes;
+
+  // True if can write to this page
+  bool writable;
+
+  // True if loaded on frame (kpage)
+  bool loaded;
+
+  // True if in swap
+  int swap_index;
+
+  // True if stack page
+  bool is_stack;
+
+  // Pins page so it can not be overwritten
+  bool pinned;
+};
+The `spt_entry` data structure allows `pintos` to lazily load virtual memory 
+by storing information to write a page to a frame on page fault.
+
+---- ALGORITHMS ----
+
+>> A2: In a few paragraphs, describe your code for locating the frame,
+>> if any, that contains the data of a given page.
+
+Our frame location function starts by acquiring a lock for the frame table
+to prevent concurrent accesses to the frame table. Then, we call
+`palloc_get_page()` which will return a frame address if a free frame exists
+and will return `NULL` if all frames have been allocated. If 
+`palloc_get_page()` does not return `NULL`, then a new frame table entry 
+`ft_entry()` will be created to associate the virtual address to a physical 
+address. If `palloc_get_page()` returns `NULL`, then our frame locator 
+function will find a frame to evict using an eviction algorithm.
+
+The frame table entry is appended to a list of frame table entries, allowing 
+processes to traverse through all allocated frames. If the frame locator must 
+evict a frame, it also updates the page table to clear the present bit of the 
+swapped page and updates the `swap_index` of the supplemental page table 
+associated with the swapped page.
+
+---- SYNCHRONIZATION ----
+
+>> A3: When two user processes both need a new frame at the same time,
+>> how are races avoided?
+
+A lock on the frame table is used to prevent two user processes from 
+accessing the frame table at the same time. This prevents race conditions as 
+it forces user processes to access the frame table one after another.
+Furthermore, we pin swapped pages while swapping to prevent a different page 
+fault from interrupting the swap process and swapping the same frame. The 
+entry also contains a variable that indicates whether the page has been loaded
+into memory for debugging purposes. The entry also contains a swap index which
+indicates whether a page has been sent to swap. Finally, the entry contains 
+variales that indicate if the page is a stack page or pinned. Both of these 
+conditions prevent the kernel from sending a page to swap.
+
+---- RATIONALE ----
+
+>> A4: Why did you choose the data structure(s) that you did for
+>> representing virtual-to-physical mappings?
+
+We created the `spt_entry` data structure as a list element to allow the 
+kernel to search through all entries to look for a page by virtual address.
+It contains virtual and physical addresses to keep track of the physical 
+address that a virtual address is currently mapped to. It also contains 
+information on the file pointer, file offset, read bytes, zero bytes, and 
+write access to allow the kernel to rewrite overwritten pages. 
+
+		       PAGING TO AND FROM DISK
+		       =======================
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+struct ft_entry
+{
+  // pointer to user page virtual address
+  void *v_addr;
+
+  // pointer to frame memory location
+  void *p_addr;
+
+  // current thread
+  struct thread *curr; 
+
+  // status if in use, used for eviction
+  int used;
+
+  // list element
+  struct list_elem elem;
+};
+The `ft_entry` data structure allows `pintos` to keep track of which pages
+have already been loaded into memory.
+
+---- ALGORITHMS ----
+
+>> B2: When a frame is required but none is free, some frame must be
+>> evicted.  Describe your code for choosing a frame to evict.
+
+Our eviction algorithm currently finds the first page with a set accessed bit
+in the page table. It then sends the page to swap, although it could be 
+changed to only send dirty pages and stack pages to swap since these pages 
+are the only pages whose states can not be retrieved from memory. Furthermore,
+the eviction algorithm will ignore any pinned pages. This information is 
+retrieved by searching the supplemental page table of the current thread 
+for the entry associated to a page's virtual address. After sending a page to 
+swap, our frame locator function replaces the virtual address of the frame
+table entry associated to the swapped frame. Finally, the locator function
+returns the address of the swapped frame.
+
+>> B3: When a process P obtains a frame that was previously used by a
+>> process Q, how do you adjust the page table (and any other data
+>> structures) to reflect the frame Q no longer has?
+
+When a frame previously allocated by Q is obtained by a new process P, we
+first clear the page from the page table of old process Q. Next, we search
+for the frame table entry associated with Q's virtual page and we replace
+the frame table entry's virtual address field with the new virtual page
+address from P. Then, we search for the supplemental page table entry 
+associated with the P's virtual page and set its frame address field to the
+address of the allocated frame. 
+
+>> B4: Explain your heuristic for deciding whether a page fault for an
+>> invalid virtual address should cause the stack to be extended into
+>> the page that faulted.
+
+Our heuristic for finding whether the stack should be extended on a page 
+fault relies on two factors. First, we check if the page associated with the 
+fault address conforms with x86 PUSHA convention by faulting at an address 
+greater than 32 bytes below the stack pointer `esp`. Next, we check if 
+the faulting address is within 8 MB of stack space (8 MB from `PHYS_BASE`).
+If both are true, then the faulting page is a stack page.
+
+---- SYNCHRONIZATION ----
+
+>> B5: Explain the basics of your VM synchronization design.  In
+>> particular, explain how it prevents deadlock.  (Refer to the
+>> textbook for an explanation of the necessary conditions for
+>> deadlock.)
+
+Our synchronization scheme avoids deadlocks by pinning pages when a page 
+fault is evicting a page. This prevents other processes from evicting the
+same page, which avoids deadlocks.
+
+>> B6: A page fault in process P can cause another process Q's frame
+>> to be evicted.  How do you ensure that Q cannot access or modify
+>> the page during the eviction process?  How do you avoid a race
+>> between P evicting Q's frame and Q faulting the page back in?
+
+The evicted page is pinned during P's eviction process which prevents Q from
+accessing of modifying the page during the eviction process. We avoid the 
+race condition by sending all pages to swap. On a new page fault, Q will 
+simply bring back its page from swap to a new frame. This can be improved by 
+simply rewriting Q's page to a new frame (unless it is a stack page or dirty 
+page) instead of sending it to swap and bringing it back.
+
+>> B7: Suppose a page fault in process P causes a page to be read from
+>> the file system or swap.  How do you ensure that a second process Q
+>> cannot interfere by e.g. attempting to evict the frame while it is
+>> still being read in
+
+When bringing in a page from swap, the page is pinned to prevent other 
+processes from evicting the same frame. If the frame is evicted while loading 
+in, the loading process will simply page fault again.
+
+>> B8: Explain how you handle access to paged-out pages that occur
+>> during system calls.  Do you use page faults to bring in pages (as
+>> in user programs), or do you have a mechanism for "locking" frames
+>> into physical memory, or do you use some other design?  How do you
+>> gracefully handle attempted accesses to invalid virtual addresses?
+
+System calls will load in pages that have not been loaded yet using page 
+faults. These pages could be evicted, which means page faults can happen both 
+user and kernel pages. On a page fault, we can check the user bit from the
+interrupt frame's error code to determine if the page that caused the fault 
+was a kernel or user page. Invalid virtual addresses kill the process by 
+calling `exit(-1)` to indicate that the process failed.
+
+---- RATIONALE ----
+
+>> B9: A single lock for the whole VM system would make
+>> synchronization easy, but limit parallelism.  On the other hand,
+>> using many locks complicates synchronization and raises the
+>> possibility for deadlock but allows for high parallelism.  Explain
+>> where your design falls along this continuum and why you chose to
+>> design it this way.
+
+Our design uses a single lock for accesses to the frame table which limits 
+parallelism. We chose to avoid deadlocks by forcing swap operations to 
+execute sequentially to focus our efforts on more complicated parts of the 
+lab.
+
+			   SURVEY QUESTIONS
+			   ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+This one was pretty hard. The design and development took a long time, but 
+debugging was the bulk of the time.
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+I understand how virtual memory works a lot better now.
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+The Stanford doc's order of implementation was a bit confusing. This 
+project could be better explained by focusing on implementing lazy 
+loading, stack growth, and then swapping.
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+N/A
+
+>> Any other comments?
+

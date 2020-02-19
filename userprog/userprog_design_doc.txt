@@ -1,0 +1,265 @@
+		     +--------------------------+
+       	 |          EE461S		      |
+		     | PROJECT 2: USER PROGRAMS	|
+		     | 	   DESIGN DOCUMENT     	|
+		     +--------------------------+
+---- GROUP ----
+>> Fill in the names and email addresses of your group members.
+Edie Zhou <edie198@gmail.com>
+Meyer Dauber <max.dauber@utexas.edu>
+
+---- PRELIMINARIES ----
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+			   
+         ARGUMENT PASSING
+			   ================
+---- DATA STRUCTURES ----
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+No new data structures were created and no existing data structures were
+modified to implement argument passing.
+
+---- ALGORITHMS ----
+>> A2: Briefly describe how you implemented argument parsing.  How do
+>> you arrange for the elements of argv[] to be in the right order?
+>> How do you avoid overflowing the stack page?
+
+To implement argument parsing, the first token from `file_name` was removed
+from a copy of `file_name` and passed as the program name to `thread_create`.
+Thus, the new thread would only execute the program even when args were
+passed. `load()` calls the function `push_on_stack()` which first pushes input
+from the command line on the call stack while saving the token stack pointers
+to an array. Next, `push_on_stack()` pads the stack so it is divisible by the
+width of the stack (4). Then, the pointers for `argv` are pushed in reverse
+order starting with the `argc` sentinel and going to `argv[0]`. Finally, the 
+pointer to `argv`, `argc`, and return address (0) are pushed respectively to
+the call stack.
+
+I arranged for the elements of `argv[]` to be in the right order by using an
+array of pointers to keep track of the pointers to every token as I placed 
+them on the stack. Then, I started at the largest index in `argv[]` and 
+decremented towards 0, placing every stack pointer for the tokens on to the 
+stack.
+
+`push_on_stack()` avoids overflowing the stack page by adding the size of
+pushed elements and checking that the new size if less than the maximum size
+`PGSIZE` of a page. If the call stack's size exceeds `PGSIZE`, then 
+`push_on_stack` returns false.
+
+---- RATIONALE ----
+>> A3: Why does Pintos implement strtok_r() but not strtok()?
+
+`strtok()` stores variables globally that are reused for subsequent calls,
+which means that `strtok()` is not thread safe. `strtok_r()` is the re-entrant
+version of `strtok()` and it has a third argument `saveptr` that maintains
+context between subsequent calls.
+
+			     SYSTEM CALLS
+			     ============
+---- DATA STRUCTURES ----
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+struct file_node * find_file_node (int fd);
+
+Used to keep track of files in the thread. Stored in a list to allow for 
+searching and file indexing
+
+struct thread_node
+{
+	tid_t tid;
+	struct list_elem elem;
+
+	bool parent_waiting;
+	int exit_stat;
+};
+
+Used to keep track of the threads and also retain information about the 
+thread after it is done running (exit_stat).
+
+
+>> B2: Describe how file descriptors are associated with open files.
+>> Are file descriptors unique within the entire OS or just within a
+>> single process?
+
+File descriptors are associated with the file_node struct in syscall.h. 
+This struct also contains list_elem information and a pointer to the actual 
+file. These file_nodes are maintained in a list within each thread, and are
+searchable resulting in functions like find_file_node that will see if a 
+file exists associated with a specific file descriptor within the struct 
+list. The file descriptors are generated when adding a new file_node struct
+to the list in the process, so they would be local and unique within the 
+process, not the OS.
+
+
+---- ALGORITHMS ----
+>> B3: Describe your code for reading and writing user data from the
+>> kernel.
+
+When reading or writing to/from the kernel, the first thing our program 
+does is validate the buffer being read/written to make sure that no element 
+in it is NULL or invalid using check_buffer. In write, the code will first
+see if the desired fd to write to is 1 and if so invokes putbuf to 
+output to the console. If not, the file system is locked and the file
+corresponding to the file descriptor is fetched and then written to using
+file_write. In read, the code will first see if the desired fd to write 
+to is 0 and if so reads in input into the buffer after checking. If not,
+file system is locked and the file corresponding to the file descriptor 
+is fetched and then read from using file_read.
+
+>> B4: Suppose a system call causes a full page (4,096 bytes) of data
+>> to be copied from user space into the kernel.  What is the least
+>> and the greatest possible number of inspections of the page table
+>> (e.g. calls to pagedir_get_page()) that might result?  What about
+>> for a system call that only copies 2 bytes of data?  Is there room
+>> for improvement in these numbers, and how much?
+
+The number of inspections should be exactly 4096 for the full page and
+exactly 2 for the second case. This is because of our linear search 
+implementation of check_buffer where each successive byte is checked 
+until the null terminator. This could be improved somewhat by checking 
+if the last element in the buffer goes into code space or terminates in 
+some other way. That way you could throw out some buffers that are too 
+big immediately instead of getting to it iteratively.
+
+>> B5: Briefly describe your implementation of the "wait" system call
+>> and how it interacts with process termination.
+
+The wait system call begins by checking if the child exists by checking its
+`tid` against the list of `thread_nodes`. If the child is `NULL` or has no
+parent process waiting on it, the `wait` syscall returns an error (-1). Next,
+the wait syscall sets a variable in its tcb to identify the tid of the child
+it is waiting on and it sets a variable in the child's tcb to indicate that
+a parent process was waiting on the child. The system call then uses
+semaphores to let the parent process properly reap the child and remove the 
+child from its list of `thread_node` children to indicate that the child has 
+died. Finally, the wait syscall returns the exit status of the child it
+waited on.
+
+>> B6: Any access to user program memory at a user-specified address
+>> can fail due to a bad pointer value.  Such accesses must cause the
+>> process to be terminated.  System calls are fraught with such
+>> accesses, e.g. a "write" system call requires reading the system
+>> call number from the user stack, then each of the call's three
+>> arguments, then an arbitrary amount of user memory, and any of
+>> these can fail at any point.  This poses a design and
+>> error-handling problem: how do you best avoid obscuring the primary
+>> function of code in a morass of error-handling?  Furthermore, when
+>> an error is detected, how do you ensure that all temporarily
+>> allocated resources (locks, buffers, etc.) are freed?  In a few
+>> paragraphs, describe the strategy or strategies you adopted for
+>> managing these issues.  Give an example.
+
+The way we handle the error handling is by enclosing most of the 
+possible pointers in a simple function, check_ptr. It checks against
+PHYS_BASE and then against pagedir_get_page, and finally checks to 
+see if the pointer is NULL. This allows the code for checks to be 
+very short and portable so that it can be called multiple times when
+checking a buffer and before using a pointer in any of the syscalls.
+
+In order to make sure all of the allocated resources are freed, the exit
+syscall is invoked, which causes the thread to exit without faulting.
+The next thing invoked is thread_exit(), which in turn invokes 
+process_exit(). This function will automatically remove all file_node
+objects and also free all of the child threads associated with thread.
+Function that frees the files will ensure that they are all closed and 
+removed, and the other resources are freed within process_exit().
+
+---- SYNCHRONIZATION ----
+>> B7: The "exec" system call returns -1 if loading the new executable
+>> fails, so it cannot return before the new executable has completed
+>> loading.  How does your code ensure this?  How is the load
+>> success/failure status passed back to the thread that calls "exec"?
+
+The `exec` call uses a semaphore to block parent execution while the child
+loads. Our code ensures this by calling `sema_down` in the parent in 
+`process_execute()` before the child is loaded to block the parent and 
+`sema_up` in the child in `start_process()` after it has loaded to unblock the 
+semaphore. The load success/failure status is passed back to the thread that 
+calls `exec` by storing the state of a child's load on its parent's tcb. Now, 
+even if the child never existed, its load state can be accessed by its parent 
+to determine the success of the `exec` call.
+
+>> B8: Consider parent process P with child process C.  How do you
+>> ensure proper synchronization and avoid race conditions when P
+>> calls wait(C) before C exits?  After C exits?  How do you ensure
+>> that all resources are freed in each case?  How about when P
+>> terminates without waiting, before C exits?  After C exits?  Are
+>> there any special cases?
+
+I avoid the race condition of parent P prematurely calling `wait(C)` on some 
+child thread C by checking the existence of the child by calling 
+`find_child()`. The `find_child()` function attempts to find a child thread by
+`tid` on a list of `thread_node` data structures and returns `NULL` if no
+child is found. In this case, parent P would not find child C and `wait(C)`
+would error out.
+
+To avoid race conditions after C exists, a semaphore is first used to block
+execution in the parent by calling `sema_down` to wait for the child to 
+finish execution. After child C finishes execution and produces its true exit 
+state, it calls `sema_up` to unblock execution in the parent. Then, the child 
+calls `sema_down` to block its own execution until the parent has a chance to 
+reap its state. After reaping the child, the parent calls `sema_up` to unblock 
+the child and to allow it to die.
+
+We also considered the case where a parent may leave zombie child processes by
+spawning multiple processes and quickly dying. Thus, we included variables in
+the TCB that keep track of whether a parent if waiting on a current thread and
+the tid of the child that a thread is currently waiting on.
+
+---- RATIONALE ----
+>> B9: Why did you choose to implement access to user memory from the
+>> kernel in the way that you did?
+
+We chose to do multiple different checks to save as much time as 
+possible. When a user tries to pass in a pointer, it is first cast to
+an address. This address is first checked against 0xc0000000 and then 
+the PHYS_BASE of the virtual memory. This check is very fast and takes 
+care of the a lot of the cases. The check_ptr function then checks the 
+pointer to find the physical address that corresponds to user virtual
+address UADDR in the page directory associated with the pointer. It 
+returns null if the memory is unmapped there. The only time we actually
+dereference the pointers is in get_user and put_user which are used in 
+read and write respectively. This is more memory intensive so it is only
+being performed when a read or write is being done with the pointer.
+
+
+>> B10: What advantages or disadvantages can you see to your design
+>> for file descriptors?
+
+An advantage is being able to use the list functionality to manage the
+files, and it's a quick way of associating the file descriptors with the 
+files they are referencing. Some disadvantages might be that access to the
+file might be slow because of having to traverse the whole list to get 
+the file_node associated with a specified fd.
+
+>> B11: The default tid_t to pid_t mapping is the identity mapping.
+>> If you changed it, what advantages are there to your approach?
+
+We didn't change it and just treated both as the underlying integer 
+value.
+
+			   SURVEY QUESTIONS
+			   ================
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+>> Any other comments?
