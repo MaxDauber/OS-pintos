@@ -1,3 +1,3 @@
-#PintOS Operating System for EE461S
+# PintOS Operating System for EE461S
 
-more info on setting up blank pintos repo and running tests can be found [here](https://github.com/MaxDauber/OS-pintos/blob/master/SETUP.md/)
+More info on setting up blank pintos repo and running tests can be found [here](https://github.com/MaxDauber/OS-pintos/blob/master/SETUP.md/)
